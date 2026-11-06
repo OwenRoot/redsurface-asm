@@ -2,6 +2,8 @@
 
 A serverless Attack Surface Management (ASM) tool for **authorized, passive** reconnaissance of a domain you own or are permitted to assess. It runs on Netlify Functions with a vanilla JavaScript / Tailwind v4 frontend, and uses only Node's built-in modules on the server.
 
+https://redsurface-owenroot.netlify.app
+
 It has two modes:
 
 | Mode | What it does |
