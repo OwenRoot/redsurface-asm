@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RedSurface ASM Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Code+Pro:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --font-sans: "Public Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+      /* Equipment-rack slate for the control rail */
+      --color-rack: #243740;
+      --color-rack-field: #2d444e;
+      --color-rack-line: #46606a;
+      --color-rack-text: #dde6e9;
+      --color-rack-mute: #9db0b7;
+      --color-signal: #e0a93b;
+
+      /* Report surface */
+      --color-ground: #eff1ef;
+      --color-paper: #fafaf8;
+      --color-ink: #1a242b;
+      --color-mute: #56646c;
+      --color-line: #d3d9d9;
+      --color-action: #0a6b85;
+
+      /* Severity, following common CVSS conventions */
+      --color-crit: #a32030;
+      --color-high: #a94b0b;
+      --color-med: #7a5c00;
+      --color-gap: #c79a1b;
+      --color-low: #3e5e79;
+      --color-ok: #2d7656;
+      --color-idle: #aab4b8;
+
+      --color-log-ok: #86d4ae;
+      --color-log-err: #f2a3a3;
+    }
+
+    .chev {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 0.15s ease;
+    }
+    details[open] > summary .chev { transform: rotate(45deg); }
+    summary::-webkit-details-marker { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .chev { transition: none; }
+    }
+  </style>
+</head>
+<body class="bg-ground font-sans text-[15px] leading-relaxed text-ink antialiased">
+  <div class="lg:grid lg:min-h-[calc(100vh-4.5rem)] lg:grid-cols-[22rem_1fr]">
+
+    <aside class="bg-rack px-6 py-7 text-rack-text lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto">
+      <h1 class="text-xl font-bold text-white">RedSurface</h1>
+      <p class="mt-1 text-sm text-rack-mute">Attack surface assessment for domains you are authorized to test.</p>
+
+      <div class="mt-7">
+        <label for="scope" class="block text-sm font-semibold">Domain</label>
+        <input id="scope" type="text" value="example-telecom.com" spellcheck="false" autocomplete="off" autocapitalize="off"
+          class="mt-1.5 w-full rounded-md border border-rack-line bg-rack-field px-3 py-2 font-mono text-sm text-white placeholder-rack-mute focus:outline-2 focus:outline-signal" />
+      </div>
+
+      <fieldset class="mt-5">
+        <legend class="text-sm font-semibold">Mode</legend>
+        <div class="mt-1.5 grid grid-cols-2 rounded-md border border-rack-line p-0.5 text-sm">
+          <label class="cursor-pointer rounded px-3 py-1.5 text-center has-checked:bg-rack-text has-checked:font-semibold has-checked:text-rack has-focus-visible:outline-2 has-focus-visible:outline-signal">
+            <input class="sr-only" type="radio" name="mode" value="demo" checked />Demo
+          </label>
+          <label class="cursor-pointer rounded px-3 py-1.5 text-center has-checked:bg-rack-text has-checked:font-semibold has-checked:text-rack has-focus-visible:outline-2 has-focus-visible:outline-signal">
+            <input class="sr-only" type="radio" name="mode" value="live" />Live
+          </label>
+        </div>
+        <p id="modeHint" class="mt-2 text-sm text-rack-mute">Simulated hosts. Nothing on the internet is contacted.</p>
+      </fieldset>
+
+      <div id="authBox" class="mt-4 hidden border-l-2 border-signal pl-3 text-sm">
+        <label class="flex items-start gap-2.5">
+          <input id="ack" type="checkbox" class="mt-1 size-4 accent-signal" />
+          <span>I own this domain, or I have written permission to assess it.</span>
+        </label>
+        <p class="mt-2 text-rack-mute">Live mode reads public certificate logs and DNS, then sends one HEAD request to each host it finds. It does not scan ports or send exploit traffic.</p>
+      </div>
+
+      <button id="run" type="button"
+        class="mt-6 w-full rounded-md bg-signal px-4 py-2.5 font-semibold text-ink hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-50">
+        Execute Encrypted Sweep
+      </button>
+
+      <div class="mt-7">
+        <p class="text-sm font-semibold">Session</p>
+        <p class="mt-1 text-xs text-rack-mute">Salt for this page load</p>
+        <p id="salt" class="mt-0.5 break-all font-mono text-xs"></p>
+      </div>
+
+      <div class="mt-6">
+        <p class="text-sm font-semibold">Activity</p>
+        <div id="log" class="mt-1.5 h-40 space-y-1 overflow-y-auto rounded-md border border-rack-line bg-rack-field p-2.5 font-mono text-xs" aria-live="polite"></div>
+      </div>
+    </aside>
+
+    <main class="px-4 py-8 sm:px-8 lg:px-12 lg:py-10">
+
+      <section id="empty" class="max-w-xl">
+        <h2 class="text-2xl font-semibold tracking-tight">No sweep yet</h2>
+        <p class="mt-2 text-mute">Enter a domain, pick a mode and run a sweep. Results appear here, with the worst problems first.</p>
+        <p class="mt-6 font-semibold">What a sweep checks</p>
+        <ul class="mt-2 list-disc space-y-1.5 pl-5 text-mute">
+          <li>Which hostnames exist for the domain, based on public certificate logs and DNS.</li>
+          <li>Which software versions the servers announce, matched against known vulnerabilities and CISA's list of actively exploited ones.</li>
+          <li>Whether HTTPS, certificates and security headers are set up properly.</li>
+        </ul>
+        <p class="mt-6 text-sm text-mute">Results are encrypted on the server and checked for tampering in your browser before they are shown.</p>
+      </section>
+
+      <section id="report" class="hidden">
+        <h2 id="rTarget" class="break-all text-2xl font-semibold tracking-tight"></h2>
+        <p id="rMeta" class="mt-1 text-sm text-mute"></p>
+
+        <div class="mt-6 max-w-3xl">
+          <p id="rSentence" class="font-medium"></p>
+          <div id="rBar" class="mt-3 flex h-2.5 overflow-hidden rounded-sm bg-line" role="img"></div>
+          <p id="rKev" class="mt-3 hidden text-sm font-semibold text-crit"></p>
+        </div>
+
+        <div id="rNotes" class="mt-6 hidden max-w-3xl border-l-2 border-gap bg-paper px-4 py-3 text-sm">
+          <p class="font-semibold">Notes</p>
+          <div id="rNotesList" class="mt-1 space-y-1.5 text-mute"></div>
+        </div>
+
+        <div id="assets" class="mt-8 border-t border-line"></div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="border-t border-line px-4 py-5 text-sm text-mute sm:px-8 lg:px-12">
+    <p class="font-semibold text-ink">System Engineered &amp; Developed by OwenRoot.</p>
+    <p class="mt-0.5">
+      LinkedIn: Owen Michael Mt. X:
+      <a class="text-action underline underline-offset-2" href="https://x.com/_OwenRoot" target="_blank" rel="noopener noreferrer">_OwenRoot</a>.
+      GitHub:
+      <a class="text-action underline underline-offset-2" href="https://github.com/OwenRoot" target="_blank" rel="noopener noreferrer">OwenRoot</a>.
+    </p>
+  </footer>
+
+  <script>
+    'use strict';
+
+    const subtle = window.crypto.subtle;
+    const te = new TextEncoder();
+    const td = new TextDecoder();
+
+    const $ = (id) => document.getElementById(id);
+    const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
+    const unhex = (h) => Uint8Array.from(h.match(/../g) || [], (x) => parseInt(x, 16));
+    const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+    // Safe DOM builder: never uses innerHTML, so server/user data cannot inject markup.
+    function el(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined && text !== null) n.textContent = String(text);
+      return n;
+    }
+
+    // Ephemeral client-side execution salt, generated on page load.
+    const SALT = hex(crypto.getRandomValues(new Uint8Array(16)));
+    $('salt').textContent = SALT;
+
+    const currentMode = () => document.querySelector('input[name="mode"]:checked').value;
+    const MODE_HINT = {
+      demo: 'Simulated hosts. Nothing on the internet is contacted.',
+      live: 'Real discovery from public sources. Use only on domains you are authorized to assess.',
+    };
+    document.querySelectorAll('input[name="mode"]').forEach((r) =>
+      r.addEventListener('change', () => {
+        $('authBox').classList.toggle('hidden', currentMode() !== 'live');
+        $('modeHint').textContent = MODE_HINT[currentMode()];
+      })
+    );
+
+    function log(msg, type) {
+      const colors = { ok: 'text-log-ok', err: 'text-log-err', info: 'text-rack-mute' };
+      const ts = new Date().toLocaleTimeString([], { hour12: false });
+      $('log').appendChild(el('p', colors[type] || colors.info, `${ts}  ${msg}`));
+      $('log').scrollTop = $('log').scrollHeight;
+    }
+
+    async function deriveKeys(privateKey, serverPubHex) {
+      const serverPub = await subtle.importKey('raw', unhex(serverPubHex), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+      const shared = await subtle.deriveBits({ name: 'ECDH', public: serverPub }, privateKey, 256);
+      const hk = await subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+      const salt = unhex(SALT);
+      const params = (label) => ({ name: 'HKDF', hash: 'SHA-256', salt, info: te.encode(label) });
+      const encKey = await subtle.deriveKey(params('asm-enc-v1'), hk, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      const macKey = await subtle.deriveKey(params('asm-mac-v1'), hk, { name: 'HMAC', hash: 'SHA-256', length: 256 }, false, ['verify']);
+      return { encKey, macKey };
+    }
+
+    async function openEnvelope(env, privateKey) {
+      if (!env || env.v !== 1 || !/^04[0-9a-f]{128}$/i.test(env.serverPub || '')) {
+        throw new Error('Malformed envelope');
+      }
+      const { encKey, macKey } = await deriveKeys(privateKey, env.serverPub);
+
+      // 1. Verify integrity first (constant-time verify via WebCrypto).
+      const message = `v1.${env.serverPub}.${env.iv}.${env.ct}`;
+      const valid = await subtle.verify('HMAC', macKey, unhex(env.sig), te.encode(message));
+      if (!valid) throw new Error('Integrity check failed. The response was rejected.');
+      log('Signature valid (HMAC-SHA256).', 'ok');
+
+      // 2. Only then decrypt.
+      const plain = await subtle.decrypt({ name: 'AES-GCM', iv: unhex(env.iv) }, encKey, unb64(env.ct));
+      return JSON.parse(td.decode(plain));
+    }
+
+    /* ------------------------------ rendering ------------------------------ */
+
+    const SEV = {
+      CRITICAL: { word: 'Critical', dot: 'bg-crit', border: 'border-crit', text: 'text-crit', rank: 0 },
+      HIGH: { word: 'High', dot: 'bg-high', border: 'border-high', text: 'text-high', rank: 1 },
+      MEDIUM: { word: 'Medium', dot: 'bg-gap', border: 'border-gap', text: 'text-med', rank: 2 },
+      LOW: { word: 'Low', dot: 'bg-low', border: 'border-low', text: 'text-low', rank: 3 },
+    };
+
+    const STATUS = {
+      vulnerable: { bar: 'bg-crit', label: 'Vulnerable', text: 'text-crit', rank: 0 },
+      warning: { bar: 'bg-gap', label: 'Hardening gaps', text: 'text-med', rank: 1 },
+      unreachable: { bar: 'bg-idle', label: 'No response', text: 'text-mute', rank: 2 },
+      clean: { bar: 'bg-ok', label: 'No known issues', text: 'text-ok', rank: 3 },
+    };
+
+    function bulletList(items) {
+      const ul = el('ul', 'mt-1 list-disc space-y-1 pl-5');
+      items.forEach((i) => ul.appendChild(el('li', '', i)));
+      return ul;
+    }
+
+    function fixBlock(title, content) {
+      const wrap = el('div', 'mt-3');
+      wrap.appendChild(el('p', 'text-sm font-semibold', title));
+      wrap.appendChild(Array.isArray(content) ? bulletList(content) : el('p', 'mt-1', content));
+      return wrap;
+    }
+
+    function renderFinding(f) {
+      const sev = SEV[f.severity] || SEV.LOW;
+      const box = el('div', `mt-4 border-l-4 ${sev.border} bg-paper py-3 pl-4 pr-4`);
+
+      const head = el('div', 'flex flex-wrap items-center gap-x-3 gap-y-1 text-sm');
+      const sevWrap = el('span', `inline-flex items-center gap-1.5 font-semibold ${sev.text}`);
+      sevWrap.appendChild(el('i', `inline-block size-2.5 rounded-[1px] ${sev.dot}`));
+      sevWrap.appendChild(document.createTextNode(sev.word));
+      head.appendChild(sevWrap);
+      head.appendChild(el('span', 'font-mono font-semibold', f.cve || f.id));
+      if (f.cvss !== null && f.cvss !== undefined) head.appendChild(el('span', 'text-mute', `CVSS ${f.cvss}`));
+      if (f.knownExploited) head.appendChild(el('span', 'rounded-sm border border-crit px-1.5 py-px text-xs font-semibold text-crit', 'Known exploited (CISA)'));
+      box.appendChild(head);
+
+      box.appendChild(el('h4', 'mt-2 font-semibold', f.title));
+      box.appendChild(el('p', 'mt-1 max-w-prose text-mute', f.description));
+      if (f.fixedIn) box.appendChild(el('p', 'mt-2 text-sm', `Running ${f.installed}. Fixed in ${f.fixedIn}.`));
+
+      const r = f.remediation;
+      const fix = el('div', 'mt-4 border-t border-line pt-3');
+      fix.appendChild(el('p', 'font-semibold', 'Recommended fix'));
+      fix.appendChild(el('p', 'text-sm text-mute', r.priority));
+      fix.appendChild(fixBlock('Patch', r.patch));
+      fix.appendChild(fixBlock('System hardening', r.hardening));
+      fix.appendChild(fixBlock('Access control', r.accessControl));
+      fix.appendChild(fixBlock('How to verify', r.verification));
+      box.appendChild(fix);
+      return box;
+    }
+
+    function addFact(dl, key, value, mono) {
+      if (!value) return;
+      dl.appendChild(el('dt', 'text-mute', key));
+      dl.appendChild(el('dd', mono ? 'break-all font-mono text-[13px]' : '', value));
+    }
+
+    function renderAsset(a, open) {
+      const st = STATUS[a.status] || STATUS.clean;
+      const findings = [...a.findings].sort((x, y) => (SEV[x.severity]?.rank ?? 9) - (SEV[y.severity]?.rank ?? 9));
+
+      const d = el('details', 'border-b border-line');
+      if (open) d.open = true;
+
+      const s = el('summary', 'flex cursor-pointer list-none items-start gap-3 px-2 py-3.5 hover:bg-paper focus-visible:outline-2 focus-visible:outline-action sm:px-4');
+      s.appendChild(el('span', `mt-0.5 h-11 w-1 shrink-0 rounded-sm ${st.bar}`));
+
+      const mid = el('div', 'min-w-0 flex-1');
+      mid.appendChild(el('p', 'break-all font-mono text-[15px] font-semibold', a.host));
+      mid.appendChild(el('p', 'text-sm text-mute', `${a.role}, ${a.ip}`));
+      s.appendChild(mid);
+
+      const right = el('div', 'shrink-0 text-right text-sm');
+      right.appendChild(el('p', `font-semibold ${st.text}`, st.label));
+      const count = findings.length ? `${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}` : (a.version ? `${a.product} ${a.version}` : 'Nothing to fix');
+      right.appendChild(el('p', 'text-mute', count));
+      s.appendChild(right);
+
+      s.appendChild(el('span', 'chev mt-2 shrink-0 text-mute'));
+      d.appendChild(s);
+
+      const body = el('div', 'px-2 pb-6 pt-1 sm:pl-8 sm:pr-4');
+      const dl = el('dl', 'grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1 text-sm');
+      addFact(dl, 'Software', a.version ? `${a.product} ${a.version}` : a.product, false);
+      addFact(dl, 'Banner', a.banner, true);
+      if (a.http) addFact(dl, 'Response', `HTTP ${a.http.status} over ${a.http.scheme.toUpperCase()}`, false);
+      if (a.tls) addFact(dl, 'Certificate', `${a.tls.authorized ? 'Trusted' : 'Not trusted'}, expires ${a.tls.validTo} (${a.tls.daysLeft} days), issued by ${a.tls.issuer}`, false);
+      addFact(dl, 'Note', a.note, false);
+      body.appendChild(dl);
+      findings.forEach((f) => body.appendChild(renderFinding(f)));
+      d.appendChild(body);
+      return d;
+    }
+
+    function renderSummary(s) {
+      const parts = [
+        { n: s.vulnerableAssets, text: 'vulnerable', bar: 'bg-crit' },
+        { n: s.warningAssets, text: 'with hardening gaps', bar: 'bg-gap' },
+        { n: s.cleanAssets, text: 'clean', bar: 'bg-ok' },
+        { n: s.unreachableAssets, text: 'with no response', bar: 'bg-idle' },
+      ];
+      const active = parts.filter((p) => p.n > 0);
+      $('rSentence').textContent = `${s.assetsScanned} ${s.assetsScanned === 1 ? 'host' : 'hosts'} checked: ` +
+        (active.map((p) => `${p.n} ${p.text}`).join(', ') || 'none found') + '.';
+
+      const bar = $('rBar');
+      bar.setAttribute('aria-label', active.map((p) => `${p.n} ${p.text}`).join(', '));
+      bar.replaceChildren(...active.map((p) => {
+        const seg = el('div', p.bar);
+        seg.style.width = `${(p.n / Math.max(s.assetsScanned, 1)) * 100}%`;
+        return seg;
+      }));
+
+      const kev = $('rKev');
+      if (s.knownExploited > 0) {
+        kev.textContent = `${s.knownExploited} ${s.knownExploited === 1 ? 'finding is' : 'findings are'} on CISA's list of actively exploited vulnerabilities. Fix these first.`;
+        kev.classList.remove('hidden');
+      } else {
+        kev.classList.add('hidden');
+      }
+    }
+
+    function render(data) {
+      $('empty').classList.add('hidden');
+      $('report').classList.remove('hidden');
+
+      $('rTarget').textContent = data.target;
+      const when = new Date(data.generatedAt).toLocaleString();
+      $('rMeta').textContent = data.simulated
+        ? `Demo data with simulated hosts. Generated ${when}.`
+        : `Live results. Generated ${when}. Sources: ${data.sources.join(', ') || 'none'}.`;
+
+      renderSummary(data.summary);
+
+      $('rNotes').classList.toggle('hidden', !data.warnings.length);
+      $('rNotesList').replaceChildren(...data.warnings.map((w) => el('p', '', w)));
+
+      const sorted = [...data.assets].sort((a, b) => (STATUS[a.status]?.rank ?? 9) - (STATUS[b.status]?.rank ?? 9));
+      const firstVuln = sorted.findIndex((a) => a.status === 'vulnerable');
+      $('assets').replaceChildren(...sorted.map((a, i) => renderAsset(a, i === firstVuln)));
+    }
+
+    async function runSweep() {
+      const domain = $('scope').value.trim().toLowerCase();
+      const mode = currentMode();
+      if (!/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(domain)) {
+        log('Enter a valid domain, for example example.com.', 'err');
+        return;
+      }
+      if (mode === 'live' && !$('ack').checked) {
+        log('Confirm you are authorized to assess this domain.', 'err');
+        return;
+      }
+      const btn = $('run');
+      btn.disabled = true;
+      try {
+        log(`Target ${domain}, ${mode} mode.`);
+        log('Generating one-time key pair.');
+        const kp = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+        const pub = hex(await subtle.exportKey('raw', kp.publicKey));
+
+        log(mode === 'live' ? 'Sweeping. This can take up to 10 seconds.' : 'Sending request.');
+        let url = `/.netlify/functions/recon-surface?domain=${encodeURIComponent(domain)}&salt=${SALT}&pub=${pub}&mode=${mode}`;
+        if (mode === 'live') url += '&ack=1';
+        const res = await fetch(url, { method: 'GET', cache: 'no-store', credentials: 'omit' });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+
+        log('Response received. Checking signature.');
+        const data = await openEnvelope(body.envelope, kp.privateKey);
+        log('Decrypted (AES-256-GCM).', 'ok');
+        log(`Server time ${body.metrics.executionMs} ms, ${body.metrics.assetsProcessed} hosts, ${body.metrics.feedSignatures} rules${body.metrics.partial ? ', partial results' : ''}.`, 'info');
+        render(data);
+      } catch (err) {
+        log(`Error: ${err.message}`, 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    $('run').addEventListener('click', runSweep);
+    $('scope').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSweep(); });
+    log('Ready.', 'ok');
+  </script>
+</body>
+</html>
