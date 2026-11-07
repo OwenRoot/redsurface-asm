@@ -2,9 +2,8 @@
 
 RedSurface is a serverless attack surface management (ASM) tool. Give it a domain you are authorized to assess, and it finds the hosts exposed to the internet, checks how they are configured, and tells you what to fix first.
 
-**Live demo:** [https://YOUR-SITE.netlify.app](https://YOUR-SITE.netlify.app)
+**Live demo:** [https://redsurface-owenroot.netlify.app]
 
-<!-- Add a screenshot after deploying: ![RedSurface results](docs/screenshot.png) -->
 
 ## What it does
 
